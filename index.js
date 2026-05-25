@@ -17,25 +17,35 @@ const port = process.env.PORT;
 
 
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
+    serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+    }
 });
 
 async function run() {
-  try {
-    await client.connect();
-    
+    try {
+        await client.connect();
+
+        const db = client.db('print-master')
+        const collectionPrintMaster = db.collection('print-master')
+
+        //================ GET ALL PRINT MASTERS =================
+        app.get('/print-masters', async (req, res) => {
+            const result = await collectionPrintMaster.find().toArray()
+            res.send(result);
+        })
+
+        //================ post print master =================
+        
 
 
 
-
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
-    // await client.close();
-  }
+        await client.db("admin").command({ ping: 1 });
+        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    } finally {
+        // await client.close();
+    }
 }
 run().catch(console.dir);
