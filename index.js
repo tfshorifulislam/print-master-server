@@ -24,7 +24,7 @@ const upload = multer({
     dest: 'uploads/'
 })
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 // const multer = require("multer");
 const uri = process.env.PRINT_MASTER_CONNECTION;
 const port = process.env.PORT;
@@ -47,21 +47,45 @@ async function run() {
         const collectionUploads = db.collection('uploads')
 
         //================ GET ALL PRINT MASTERS =================
-        app.get('/print-masters', async (req, res) => {
-            const result = await collectionPrintMaster.find().toArray()
+        app.get('/uploads', async (req, res) => {
+            const result = await collectionUploads.find().toArray()
             res.send(result);
         })
 
-        //================ upload print master =================
-        app.post('/upload', upload.single('image'), async (req, res) => {
-            const result = await cloudinary.uploader.upload(req.file.path);
-            const imageUrl = result.secure_url;
-            console.log(imageUrl);
-            await collectionUploads.insertOne({ image: imageUrl });
-            res.send({ success: true, image: imageUrl });
+
+        //================= GET ONLY ONE USER ALL POST =================
+        app.get('/uploads/user/:id', async (req, res) => {
+            const { id } = req.params;
+            const result = await collectionUploads.find({ id: id }).toArray();
+            res.send(result);
+        });
+
+        //================ GET ONE PRINT MASTER POST =================
+        app.get('/uploads/:id', async (req, res) => {
+            const { id } = req.params;
+            const result = await collectionUploads.findOne({ _id: new ObjectId(id) });
+            res.send(result);
         })
 
 
+
+        //================ upload print master =================
+        app.post('/upload', upload.single('image'), async (req, res) => {
+            const { text, email, id, name } = req.body;
+            const result = await cloudinary.uploader.upload(req.file.path);
+            const imageUrl = result.secure_url;
+            console.log(imageUrl);
+            await collectionUploads.insertOne({ image: imageUrl, text, email, id, name });
+            res.send({ success: true, image: imageUrl, text, email, id, name });
+        })
+
+
+
+
+        //================ server is running =================
+        app.get('/', (req, res) => {
+            res.send('server is running!');
+        })
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
