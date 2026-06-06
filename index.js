@@ -1,161 +1,176 @@
 const dns = require("node:dns");
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
-const express = require('express')
+const express = require("express");
 const app = express();
-const cors = require('cors');
-const dotenv = require('dotenv');
-const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
+const cors = require("cors");
+const dotenv = require("dotenv");
+const cloudinary = require("cloudinary").v2;
 
-dotenv.config()
-app.use(cors())
-app.use(express.json())
+dotenv.config();
 
+app.use(cors());
+// Base64 ইমেজের জন্য লিমিট বাড়িয়ে দেওয়া হলো
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
+
+// ================= CLOUDINARY CONFIG =================
 cloudinary.config({
-    cloud_name: process.env.CLOUD_NAME,
-    api_key: process.env.API_KEY,
-    api_secret: process.env.API_SECRET
-})
-
-
-// multer setup
-const upload = multer({
-    dest: 'uploads/'
-})
-
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
-// const multer = require("multer");
-const uri = process.env.PRINT_MASTER_CONNECTION;
-const port = process.env.PORT;
-
-
-const client = new MongoClient(uri, {
-    serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-    }
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.API_KEY,
+  api_secret: process.env.API_SECRET,
 });
 
+// ================= MONGODB =================
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
-const jwks = createRemoteJWKSet(new URL(`http://localhost:3000/api/auth/jwks`));
+const uri = process.env.PRINT_MASTER_CONNECTION;
+const port = process.env.PORT || 5000;
 
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
+
+// ================= JWT VERIFY =================
+const jwks = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
+);
 
 const verifyToken = async (req, res, next) => {
-    const token = req?.headers?.authorization;
-    console.log('token with headers', token);
+  const token = req?.headers?.authorization;
 
-    if (!token) {
-        return res.status(401).send({ message: 'Unauthorized' });
-    }
+  if (!token) {
+    return res.status(401).send({ message: "Unauthorized" });
+  }
 
-    const tokenParts = token?.split(' ')[1];
-    console.log('token parts', tokenParts);
+  const tokenParts = token.split(" ")[1];
 
-    if (!tokenParts) {
-        return res.status(401).send({ message: 'Unauthorized' });
-    }
+  if (!tokenParts) {
+    return res.status(401).send({ message: "Unauthorized" });
+  }
 
+  try {
+    const { payload } = await jwtVerify(tokenParts, jwks);
+    req.user = payload;
+    next();
+  } catch (error) {
+    return res.status(401).send({ message: "Unauthorized" });
+  }
+};
 
-    try {
-        const { payload } = await jwtVerify(tokenParts, jwks)
-        req.user = payload;
-        console.log('payload', payload);
-        next();
-    }
-    catch (error) {
-        console.log('token is not verify', error);
-        return res.status(401).send({ message: 'Unauthorized' });
-    }
-
-
-}
-
-
+// ================= MAIN RUN =================
 async function run() {
-    try {
-        // await client.connect();
+  try {
+    const printMasterDb = client.db("print-master");
+    const collectionUploads = printMasterDb.collection("uploads");
 
-        // Connection to the 'print-master' database
-        const printMasterDb = client.db('print-master');
-        const collectionPrintMaster = printMasterDb.collection('print-master'); // Note: In your screenshot, this collection is actually called 'users'
-        const collectionUploads = printMasterDb.collection('uploads');
+    const userInfoDb = client.db("userInfo");
+    const usersCollection = userInfoDb.collection("user");
 
-        // Connection to the 'userInfo' database
-        const userInfoDb = client.db('userInfo');
-        const usersCollection = userInfoDb.collection('user');
+    // ================= HOME =================
+    app.get("/", (req, res) => {
+      res.send("server is running!");
+    });
 
-        app.get("/user/:email", async (req, res) => {
-            try {
-                console.log("ROUTE HIT:", req.params.email);
-                const emailStr = decodeURIComponent(req.params.email).trim();
-                // Use a regex with the 'i' flag for case-insensitivity
-                const user = await usersCollection.findOne({
-                    email: { $regex: `^${emailStr}$`, $options: 'i' }
-                });
+    // ================= USER =================
+    app.get("/user/:email", async (req, res) => {
+      try {
+        const emailStr = decodeURIComponent(req.params.email).trim();
 
-                if (!user) {
-                    return res.status(404).send({ message: "User not found" });
-                }
-
-                res.send(user);
-            } catch (error) {
-                console.error(error);
-                res.status(500).send({ message: "Internal server error" });
-            }
+        const user = await usersCollection.findOne({
+          email: { $regex: `^${emailStr}$`, $options: "i" },
         });
 
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
 
-        //================ GET ALL PRINT MASTERS =================
-        app.get('/uploads', verifyToken, async (req, res) => {
-            const result = await collectionUploads.find().toArray()
-            res.send(result);
-        })
+        res.send(user);
+      } catch (error) {
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
 
+    // ================= GET ALL POSTS =================
+    app.get("/uploads", verifyToken, async (req, res) => {
+      const result = await collectionUploads.find().sort({ createdAt: -1 }).toArray();
+      res.send(result);
+    });
 
-        //================= GET ONLY ONE USER ALL POST =================
-        app.get('/uploads/user/:id', async (req, res) => {
-            const { id } = req.params;
-            const result = await collectionUploads.find({ id: id }).toArray();
-            res.send(result);
+    // ================= USER POSTS =================
+    app.get("/uploads/user/:id", verifyToken, async (req, res) => {
+      const { id } = req.params;
+      const result = await collectionUploads.find({ id }).toArray();
+      res.send(result);
+    });
+
+    // ================= SINGLE POST =================
+    app.get("/uploads/:id", verifyToken, async (req, res) => {
+      const { id } = req.params;
+      const result = await collectionUploads.findOne({
+        _id: new ObjectId(id),
+      });
+      res.send(result);
+    });
+
+    // ================= IMAGE UPLOAD (NO MULTER) =================
+    app.post("/upload", verifyToken, async (req, res) => {
+      try {
+        const { image, text, email, id, name, userImage } = req.body;
+
+        // টেক্সট অথবা ইমেজ যেকোনো একটা থাকলেই পোস্ট করা যাবে
+        if (!text && !image) {
+          return res.status(400).send({ message: "Cannot create an empty post" });
+        }
+
+        let imageUrl = "";
+
+        // ছবি থাকলে ক্লাউডিনারিতে আপলোড হবে
+        if (image) {
+          const result = await cloudinary.uploader.upload(image, {
+            folder: "uploads",
+          });
+          imageUrl = result.secure_url;
+        }
+
+        const newPost = {
+          image: imageUrl, // ছবি না থাকলে ফাকা স্ট্রিং যাবে
+          text: text || "",
+          email,
+          id,
+          name,
+          userImage,
+          createdAt: new Date(),
+        };
+
+        const insertResult = await collectionUploads.insertOne(newPost);
+
+        res.send({
+          success: true,
+          postId: insertResult.insertedId,
+          image: imageUrl,
         });
+      } catch (error) {
+        res.status(500).send({
+          success: false,
+          message: error.message,
+        });
+      }
+    });
 
-        //================ GET ONE PRINT MASTER POST =================
-        app.get('/upload/:id', async (req, res) => {
-            const { id } = req.params;
-            const result = await collectionUploads.findOne({ _id: new ObjectId(id) });
-            res.send(result);
-        })
-
-
-
-        //================ upload print master =================
-        app.post('/upload', upload.single('image'), async (req, res) => {
-            const { text, email, id, name, userImage } = req.body;
-            const result = await cloudinary.uploader.upload(req.file.path);
-            const imageUrl = result.secure_url;
-            console.log(imageUrl);
-            await collectionUploads.insertOne({ image: imageUrl, text, email, id, name, userImage });
-            res.send({ success: true, image: imageUrl, text, email, id, name, userImage, });
-        })
-
-
-
-
-        //================ server is running =================
-        app.get('/', (req, res) => {
-            res.send('server is running!');
-        })
-        // await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
-    } finally {
-        // await client.close();
-    }
+    console.log("MongoDB connected successfully");
+  } finally {
+    // keep alive
+  }
 }
 
 app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
-})
+  console.log(`Server running on port ${port}`);
+});
+
 run().catch(console.dir);
